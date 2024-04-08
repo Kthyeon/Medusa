@@ -1,0 +1,24 @@
+{% if messages[0]['from'] == 'gpt' %}
+    {% set loop_messages = messages[1:] %}
+    {% set gpt_message = messages[0]['value'].strip() + '\n\n' %}
+{% else %}
+    {% set loop_messages = messages %}
+    {% set gpt_message = '' %}
+{% endif %}
+
+{{ bos_token + gpt_message }}
+{% for message in loop_messages %}
+    {% if (message['from'] == 'human') != (loop.index0 % 2 == 0) %}
+        {{ raise_exception('Conversation roles must alternate human/assistant/human/assistant/...') }}
+    {% endif %}
+    
+    {% if message['from'] == 'human' %}
+        {{ 'human: ' + message['value'].strip() + '\n' }}
+    {% elif message['from'] == 'assistant' %}
+        {{ 'ASSISTANT: ' + message['value'].strip() + eos_token + '\n' }}
+    {% endif %}
+    
+    {% if loop.last and message['from'] == 'human' and add_generation_prompt %}
+        {{ 'ASSISTANT:' }}
+    {% endif %}
+{% endfor %}
