@@ -414,8 +414,6 @@ def train():
     # Load data
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
 
-
-
     # Save loaa config
     loaa_config.save_pretrained(training_args.output_dir)
 
