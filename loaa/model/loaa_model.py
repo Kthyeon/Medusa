@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_mistral_kv import MistralForCausalLM as KVMistralForCausalLM
+import math
 # import transformers
 
 # # monkey patch
@@ -20,7 +21,7 @@ from huggingface_hub import hf_hub_download
 import warnings
 
 ADDRESS = {
-    'lmsys/vicuna-7b-v1.3': '/mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
+    'lmsys/vicuna-7b-v1.3': '/data/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
 }
 
 HIDDEN_SIZE = {
@@ -88,13 +89,15 @@ class LoaBlock(nn.Module):
         hidden_size (int): The size of the hidden layers in the block.
     """
 
-    def __init__(self, hidden_size, width = 0.25):
+    def __init__(self, hidden_size, width = 0.25, loaa = 9, position = 0):
         super().__init__()
         assert hidden_size % width == 0, "hidden_size must be divisible by width"
 
         self.proj = nn.Linear(hidden_size, int(hidden_size * width), bias = False)
         # self.pointwise = nn.Linear(hidden_size * width, hidden_size * width, bias = False)
         self.exp = nn.Linear(int(hidden_size * width), hidden_size, bias = False)
+        self.loaa = 9
+        self.position = position
 
         # Initialize as an identity mapping
         # torch.nn.init.zeros_(self.exp.weight)
@@ -102,16 +105,42 @@ class LoaBlock(nn.Module):
         # Use SwiGLU activation to keep consistent with the Llama model
         self.act = nn.SiLU()
 
+        self.embedding_size = hidden_size
+        self.pe = self.get_sinusoidal_encoding()
+        
+    def get_sinusoidal_encoding(self):
+        """
+        Generates sinusoidal positional encodings for a given sequence length.
+
+        Args:
+            seq_length (int): The length of the sequence.
+
+        Returns:
+            torch.Tensor: Sinusoidal positional encodings with shape [seq_length, embedding_size].
+        """
+        seq_length = self.loaa
+        position = torch.arange(seq_length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.embedding_size, 2) * -(math.log(10000.0) / self.embedding_size))
+        pe = torch.zeros(seq_length, self.embedding_size)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return pe
+
     def forward(self, x):
         """
         Forward pass of the Low-Rank Look-Ahead Block.
 
         Args:
             x (torch.Tensor): Input tensor.
+            i (int): The index of the positional encoding to add.
 
         Returns:
             torch.Tensor: Output after activation.
         """
+        # Assuming x is of shape [batch_size, seq_length, embedding_size]
+        # Add broadcasting to handle batch size and convert pe to the same device as x
+        # add positional encoding
+        x[:, -1, :] += self.pe.unsqueeze(0)[:, self.position, :].to(x.device)
         return self.exp(self.act(self.proj(x)))
 
 
@@ -156,9 +185,9 @@ class LoaaModel(nn.Module):
         self.loaa_head = nn.ModuleList(
             [
                 nn.Sequential(
-                    *([LoaBlock(self.hidden_size, config.loaa_width)] * loaa_num_layers),
+                    *([LoaBlock(self.hidden_size, config.loaa_width, self.loaa, position)] * loaa_num_layers),
                 )
-                for _ in range(loaa_num_heads)
+                for position in range(loaa_num_heads)
             ]
         )
         self.position_embedding = nn.ModuleList(

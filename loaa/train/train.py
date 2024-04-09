@@ -37,6 +37,7 @@ from fastchat.model.model_adapter import get_conversation_template
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 import os
+import wandb
 
 from loaa.model.loaa_model import LoaaModel, LoaaConfig
 
@@ -125,7 +126,7 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    cache_dir: Optional[str] = field(default='/mnt/data1/taehyeon/taehyeon/')
+    cache_dir: Optional[str] = field(default='/data/taehyeon/')
     report_to: Optional[str] = None
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
@@ -141,6 +142,10 @@ class TrainingArguments(transformers.TrainingArguments):
     loaa_num_layers: int = field(
         default=1,
         metadata={"help": "Number of layers for each loaa head."},
+    )
+    loaa_width: float = field(
+        default=0.25,
+        metadata={"help": "Width of the loaa head."},
     )
 
 
@@ -350,6 +355,16 @@ def train():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
 
+    name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}"
+    group = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}"
+
+    # wandb initialization
+    wandb.init(project="Loaa-Bench", 
+               entity="Instruct-decode",
+               group=group,
+               name=name,
+               config=training_args)
+
     # Set RoPE scaling factor
     config = transformers.AutoConfig.from_pretrained(
         model_args.model_name_or_path,
@@ -377,6 +392,7 @@ def train():
     loaa_config = LoaaConfig(
         loaa_num_heads=training_args.loaa_num_heads,
         loaa_num_layers=training_args.loaa_num_layers,
+        loaa_width = training_args.loaa_width,
         base_model_name_or_path=model_args.model_name_or_path,
     )
 
@@ -384,7 +400,7 @@ def train():
     loaa_lm_head = LoaaModel(loaa_config, model)
 
     # Format output dir
-    training_args.output_dir = f"{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}"
+    training_args.output_dir = f"{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}"
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
