@@ -1,11 +1,11 @@
-torchrun --nproc_per_node=1 loaa/train/train.py --model_name_or_path lmsys/vicuna-7b-v1.3 \
+CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master_port 29600 loaa/train/train.py --model_name_or_path lmsys/vicuna-7b-v1.3 \
     --data_path ShareGPT_Vicuna_unfiltered/ShareGPT_V4.3_unfiltered_cleaned_split.json \
     --bf16 True \
     --output_dir test \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 4 \
+    --per_device_train_batch_size 2 \
+    --per_device_eval_batch_size 2 \
+    --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "no" \
     --learning_rate 1e-3 \
@@ -14,7 +14,7 @@ torchrun --nproc_per_node=1 loaa/train/train.py --model_name_or_path lmsys/vicun
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 True \
-    --model_max_length 2048 \
+    --model_max_length 512 \
     --lazy_preprocess True \
-    --loaa_num_heads 3 \
+    --loaa_num_heads 9 \
     --loaa_num_layers 1

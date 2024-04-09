@@ -37,6 +37,7 @@ from fastchat.model.model_adapter import get_conversation_template
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 import os
+
 from loaa.model.loaa_model import LoaaModel, LoaaConfig
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
@@ -72,6 +73,8 @@ class CustomizedTrainer(Trainer):
         loss = 0
         loss_fct = CrossEntropyLoss()
         log = {}
+
+
         for i in range(loaa):
             loaa_logits = logits[i, :, : -(2 + i)].contiguous()
             loaa_labels = labels[..., 2 + i :].contiguous()
@@ -122,7 +125,7 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    cache_dir: Optional[str] = field(default='/data/taehyeon/')
+    cache_dir: Optional[str] = field(default='/mnt/data1/taehyeon/taehyeon/')
     report_to: Optional[str] = None
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
@@ -177,7 +180,6 @@ def preprocess(
     Returns:
         Dict: A dictionary containing tokenized inputs, labels, and attention mask.
     """
-
     prompts = []
     for source in sources:
         conversation = source['conversations']
@@ -186,9 +188,9 @@ def preprocess(
         formatted_conversation = ""
         for message in conversation:
             prefix = "human: " if message['from'] == 'human' else "ASSISTANT: "
-            formatted_conversation += prefix + message['value'].strip() + '\n'
+            formatted_conversation += prefix + message['value'].strip() + '\n\n'
 
-        prompts.append(formatted_conversation[:-1])  # Remove the last newline character
+        prompts.append(formatted_conversation)  # Remove the last newline character
 
     # Tokenize conversations
     encoding = tokenizer(
@@ -202,31 +204,39 @@ def preprocess(
     targets = torch.full(encoding.input_ids.shape, IGNORE_TOKEN_ID, dtype=torch.long)
 
     # Correcting label application using the tokenizer's decode method to match prompts with original text
-    for i, prompt in enumerate(prompts):
-        offset_mapping = encoding['offset_mapping'][i]
-        input_ids = encoding['input_ids'][i]
-        decoded_input = tokenizer.decode(input_ids, skip_special_tokens=False)
+    for i, (source, prompt) in enumerate(zip(sources, prompts)):
+        encoded_conversation = encoding.input_ids[i]
+        offset_mapping = encoding.offset_mapping[i]
 
-        start_index = 0
-        for message in sources[i]['conversations']:
+        # Track position in original prompt to find start of assistant messages
+        prompt_position = 0
+
+        for message in source['conversations']:
+            # We're only interested in assistant's messages for labeling
             if message['from'] == 'gpt':
                 content = message['value'].strip()
-                start_position = decoded_input.find(content, start_index)
+
+                # Find start position of this message in the prompt using the prompt_position as start point
+                start_position = prompt.find(content, prompt_position)
                 
+                # Update prompt_position to the end of the current content
+                prompt_position = start_position + len(content)
+
                 if start_position != -1:
-                    start_index = start_position + len(content)
-                    start_token, end_token = None, None
+                    # Convert start_position to token space
+                    start_token = None
+                    end_token = None
 
                     for j, (start, end) in enumerate(offset_mapping):
-                        if start <= start_position < end:
+                        if start_token is None and start >= start_position:
                             start_token = j
-                        if start < start_index <= end:
+                        if end_token is None and end >= prompt_position:
                             end_token = j
                             break
 
                     if start_token is not None and end_token is not None:
-                        targets[i, start_token:end_token + 1] = input_ids[start_token:end_token + 1]
-
+                        # Set the corresponding labels for this segment
+                        targets[i, start_token:end_token+1] = encoded_conversation[start_token:end_token+1]
     return {
         "input_ids": encoding.input_ids,
         "labels": targets,
@@ -320,6 +330,7 @@ def make_supervised_data_module(
 
     train_json = json.load(open(data_args.data_path, "r"))
     train_dataset = dataset_cls(train_json, tokenizer=tokenizer)
+
 
     if data_args.eval_data_path:
         eval_json = json.load(open(data_args.eval_data_path, "r"))

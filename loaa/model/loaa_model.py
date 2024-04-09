@@ -20,7 +20,7 @@ from huggingface_hub import hf_hub_download
 import warnings
 
 ADDRESS = {
-    'lmsys/vicuna-7b-v1.3': '/data/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
+    'lmsys/vicuna-7b-v1.3': '/mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
 }
 
 HIDDEN_SIZE = {
@@ -46,7 +46,8 @@ class PositionEmbedding(nn.Module):
         self.weight = nn.Parameter(torch.Tensor(hidden_size))
 
     def forward(self, x):
-        return x[:, -1, :] + self.weight
+        x[:, -1, :] += self.weight
+        return x
 
 class LoaaConfig(PretrainedConfig):
     """
@@ -87,19 +88,19 @@ class LoaBlock(nn.Module):
         hidden_size (int): The size of the hidden layers in the block.
     """
 
-    def __init__(self, hidden_size, width = 4):
+    def __init__(self, hidden_size, width = 0.25):
         super().__init__()
         assert hidden_size % width == 0, "hidden_size must be divisible by width"
 
-        self.proj = nn.Linear(hidden_size, hidden_size // width, bias = False)
-        self.pointwise = nn.Linear(hidden_size // width, hidden_size // width, bias = False)
-        self.exp = nn.Linear(hidden_size // width, hidden_size, bias = False)
+        self.proj = nn.Linear(hidden_size, int(hidden_size * width), bias = False)
+        # self.pointwise = nn.Linear(hidden_size * width, hidden_size * width, bias = False)
+        self.exp = nn.Linear(int(hidden_size * width), hidden_size, bias = False)
 
         # Initialize as an identity mapping
-        torch.nn.init.zeros_(self.exp.weight)
+        # torch.nn.init.zeros_(self.exp.weight)
 
         # Use SwiGLU activation to keep consistent with the Llama model
-        self.act = SwiGLU()
+        self.act = nn.SiLU()
 
     def forward(self, x):
         """
@@ -111,7 +112,7 @@ class LoaBlock(nn.Module):
         Returns:
             torch.Tensor: Output after activation.
         """
-        return self.exp(self.act(self.pointwise(self.act(self.proj(x)))))
+        return self.exp(self.act(self.proj(x)))
 
 
 class LoaaModel(nn.Module):
@@ -227,10 +228,11 @@ class LoaaModel(nn.Module):
         self,
         input_ids=None,
         attention_mask=None,
+        labels=None,
         past_key_values=None,
         output_orig=False,
         position_ids=None,
-        loaa_forward=False,
+        # loaa_forward=False,
         **kwargs,
     ):
         """Forward pass of the LoaaModel.
@@ -272,12 +274,11 @@ class LoaaModel(nn.Module):
         # TODO (@taehyeonk): Consider parallelizing this loop for efficiency
         for i in range(self.loaa):
             # positional embedding + low-rank look-ahead block
-            _loaa_hidden.append(self.base_model.lm_head(self.loaa_head[i](self.position_embedding[i](hidden_states))))
-        # reshaping (batch_size, seq_len, hidden_size * loaa)
-        loaa_pnr = torch.cat(_loaa_hidden, dim=-1)
+            # _pos_tmp = self.position_embedding[i](hidden_states.clone())
+            _loaa_hidden.append(self.base_model.model.lm_head(self.loaa_head[i](hidden_states.clone())))
 
         # sharing LM Heads
-        orig, loaa_logits = torch.chunk(loaa_pnr, self.loaa + 1, dim=-1)
+        orig, loaa_logits = _loaa_hidden[0], _loaa_hidden[1:]
         if output_orig:
             return torch.stack(loaa_logits, dim=0), outputs, orig
         return torch.stack(loaa_logits, dim=0)
