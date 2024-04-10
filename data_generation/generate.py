@@ -21,16 +21,15 @@ from fastchat.model.model_adapter import get_conversation_template
 
 # Modify OpenAI's API key and API base to use vLLM's API server.
 openai.api_key = "EMPTY"
-openai.api_base = "http://localhost:8000/v1"
+openai.api_base = "http://localhost:8001/v1"
 
 api_base_pool = []
 
 # List models API
 for i in range(10):
     openai.api_base = "http://localhost:800{}/v1".format(i)
-    try:     
+    try:
         models = openai.Model.list()["data"][0]["id"]
-        print(openai.api_base, models)
         api_base_pool.append(openai.api_base)
     except:
         break
@@ -82,6 +81,7 @@ def generate_data(messages, idx):
                         messages=converted_messages,
                         max_tokens=args.max_tokens,
                         temperature=args.temperature,
+                        request_timeout=6000
                     )
                     if response.choices[0]['finish_reason'] == "length":
                         break
@@ -114,7 +114,6 @@ def generate_data(messages, idx):
             conv.append_message(conv.roles[0], messages[0]["value"])
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
-
             response = openai.Completion.create(
                 model=model_name,
                 prompt=prompt,
@@ -123,6 +122,7 @@ def generate_data(messages, idx):
                 ignore_eos=True,
                 skip_special_tokens=False,
                 spaces_between_special_tokens=False,
+                request_timeout=60000
             )
             response = response.choices[0]['text'].strip()
             with open(args.output_path, "a") as f:
@@ -130,7 +130,7 @@ def generate_data(messages, idx):
                 f.write(json.dumps({"text": prompt+response}) + "\n")
     except Exception as e:
         print(e)
-        print(prompt)
+        # print(prompt)
         print("Failed to generate data")
 
 # if output_path exists, count the number of lines and skip the first n data
