@@ -48,90 +48,109 @@ args = parser.parse_args()
 # Assuming the ShareGPT format
 data = json.load(open(args.data_path, "r"))
 
-def generate_data(messages, idx):
+def generate_data(id, messages, idx):
     try:
-        # load balanced
         openai.api_base = api_base_pool[idx % len(api_base_pool)]
-        model_name=openai.Model.list()["data"][0]["id"]
+        model_name = openai.Model.list()["data"][0]["id"]
 
         if args.chat:
-            converted_messages = []
-            output_messages = []
-            if messages[0]["from"] == "system":
-                converted_messages.append(
-                    {
-                        "role": "system",
-                        "content": messages[0]["text"],
-                    }
-                )
-                output_messages.append(messages[0])
-                messages = messages[1:]
-            for message in messages[::2]:
-                if message["from"] != "human":
-                    return
-                converted_messages.append(
-                    {
-                        "role": "user",
-                        "content": message["value"],
-                    }
-                )
-                try:
-                    response = openai.ChatCompletion.create(
-                        model=model_name,
-                        messages=converted_messages,
-                        max_tokens=args.max_tokens,
-                        temperature=args.temperature,
-                        request_timeout=6000
-                    )
-                    if response.choices[0]['finish_reason'] == "length":
-                        break
-                    response = response.choices[0]['message']['content'].strip()
-                    output_messages.append(message)
-                    output_messages.append(
-                        {
-                            "from": "gpt",
-                            "value": response,
-                        }
-                    )
-                    converted_messages.append(
-                        {
-                            "role": "assistant",
-                            "content": response,
-                        }
-                    )
-                except:
-                    break
-            if len(output_messages) == 0:
-                return
-            with open(args.output_path, "a") as f:
-                # write in share gpt format
-                f.write(json.dumps({"conversations": output_messages}) + "\n")
+            process_chat_messages(id, messages, model_name)
         else:
-            conv = get_conversation_template(model_name)
-            if messages[0]["from"] == "system":
-                conv.system_message = messages[0]["text"]
-                messages = messages[1:]
-            conv.append_message(conv.roles[0], messages[0]["value"])
-            conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt()
-            response = openai.Completion.create(
-                model=model_name,
-                prompt=prompt,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                ignore_eos=True,
-                skip_special_tokens=False,
-                spaces_between_special_tokens=False,
-                request_timeout=60000
-            )
-            response = response.choices[0]['text'].strip()
-            with open(args.output_path, "a") as f:
-                # write in share gpt format
-                f.write(json.dumps({"text": prompt+response}) + "\n")
+            process_non_chat_messages(id, messages, model_name)
     except Exception as e:
-        print(e)
-        # print(prompt)
-        print("Failed to generate data")
+        print(f"Failed to generate data: {str(e)}")
+
+def process_chat_messages(id, messages, model_name):
+    converted_messages = []
+    output_messages = []
+
+    if messages[0]["from"] == "gpt":
+        append_system_message(messages, converted_messages, output_messages)
+
+    for message in messages[::2]:
+        if message["from"] != "human":
+            return
+
+        converted_messages.append({"role": "user", "content": message["value"]})
+        try:
+            process_conversation(model_name, converted_messages, output_messages, message)
+        except Exception as e:
+            print(f"Conversation processing failed: {str(e)}")
+            break
+    
+    write_output_if_not_empty(output_messages, id)
+
+def append_system_message(messages, converted_messages, output_messages):
+    converted_messages.append({"role": "system", "content": messages[0]["value"]})
+    output_messages.append(messages[0])
+    messages.pop(0)
+
+def process_conversation(model_name, converted_messages, output_messages, message):
+    conv = get_conversation_template(model_name)
+    prompt = conv.get_prompt()
+    response = openai.ChatCompletion.create(
+        prompt=prompt,
+        model=model_name,
+        messages=converted_messages,
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        ignore_eos=True,
+        skip_special_tokens=False,
+        spaces_between_special_tokens=False,
+        request_timeout=6000
+    )
+
+    response_content = response.choices[0]['message']['content'].strip()
+    output_messages.extend([
+        message,
+        {"from": "gpt", "value": response_content}
+    ])
+    if response.choices[0]['finish_reason'] == "length":
+        print("Response terminated due to max length")
+        return
+    converted_messages.append({"role": "assistant", "content": response_content})
+
+def write_output_if_not_empty(output_messages, id):
+    if output_messages:
+        with open(args.output_path, "a") as f:
+            f.write(json.dumps({"id": id, "conversations": output_messages}) + "\n")
+    else:
+        print("No messages to output.")
+
+def process_non_chat_messages(messages, model_name):
+    try:
+        conv = get_conversation_template(model_name)
+        if messages[0]["from"] == "system":
+            conv.system_message = messages[0]["text"]
+            messages = messages[1:]
+
+        # Append user message to the conversation template
+        conv.append_message(conv.roles[0], messages[0]["value"])
+        # Append a placeholder for the assistant's response
+        conv.append_message(conv.roles[1], None)
+        
+        prompt = conv.get_prompt()
+        response = openai.Completion.create(
+            model=model_name,
+            prompt=prompt,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            ignore_eos=True,
+            skip_special_tokens=False,
+            spaces_between_special_tokens=False,
+            request_timeout=60000
+        )
+        
+        response_text = response.choices[0]['text'].strip()
+        save_response(prompt, response_text)
+    except Exception as e:
+        print(f"Non-chat message processing failed: {str(e)}")
+
+def save_response(prompt, response):
+    with open(args.output_path, "a") as f:
+        # Write in shared GPT format, including the prompt and the model's completion
+        f.write(json.dumps({"text": prompt + response}) + "\n")
+
 
 # if output_path exists, count the number of lines and skip the first n data
 start = 0
@@ -145,6 +164,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_threads) as exec
         for idx, sample in enumerate(data[start:]):
             future = executor.submit(
                 generate_data,
+                sample["id"],
                 sample["conversations"],
                 idx,
             )

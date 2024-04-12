@@ -19,14 +19,14 @@
 data_path="ShareGPT_Vicuna_unfiltered/ShareGPT_V4.3_unfiltered_cleaned_split.json"
 output_prefix="self_vicuna"
 num_threads=256
-max_tokens=2048
+max_tokens=2048 # 8192
 base_command="python ./data_generation/generate.py" 
 
 # Loop for temperatures in increments of 0.1
 for temp in $(seq 0.3 0.1 1.0); do
     for seed in {1..5}; do  # Loop for 5 random seeds
         output_path="${output_prefix}_${temp}_seed${seed}.json"
-        command="${base_command} --data_path ${data_path} --output_path ${output_path} --num_threads ${num_threads} --max_tokens ${max_tokens} --temperature ${temp}"
+        command="${base_command} --data_path ${data_path} --output_path ${output_path} --num_threads ${num_threads} --max_tokens ${max_tokens} --temperature ${temp} --chat"
 
         echo "Running command: ${command}"
         $command  # Execute the command
