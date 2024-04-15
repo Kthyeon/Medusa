@@ -311,7 +311,6 @@ class LoaaModel(nn.Module):
         # TODO (@taehyeonk): Consider parallelizing this loop for efficiency
         for i in range(self.loaa):
             # positional embedding + low-rank look-ahead block
-            # _pos_tmp = self.position_embedding[i](hidden_states.clone())
             _loaa_hidden.append(self.base_model.model.lm_head(self.loaa_head[i](hidden_states.clone())))
 
         # sharing LM Heads

@@ -27,7 +27,8 @@ def get_accuracies(loaa, logit):
 def main(args):
     model = LoaaModel.from_pretrained(
         args.model_path,
-        # loaa_num_heads=args.loaa_num_heads,
+        loaa_num_heads=args.loaa_num_heads,
+        loaa_width=args.loaa_width,
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
         device_map="auto"
@@ -94,6 +95,8 @@ if __name__ == "__main__":
                         help="Name of the model.")
     parser.add_argument("--loaa_num_heads", type=int, default=5,
                         help="Number of loaa heads.")
+    parser.add_argument("--loaa_width", type=float, default=0.25,
+                        help="projection width of the loaa heads.")
     parser.add_argument("--data_path", type=str, required=True,
                         help="Path to the evaluation data in JSON format.")
     parser.add_argument("--save_dir", type=str, default="../../data",
