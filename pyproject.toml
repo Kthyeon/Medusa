@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "medusa-llm"
+name = "turbo-llm"
 version = "1.0"
 description = "Simple Framework for Accelerating LLM Generation with Multiple Decoding Heads"
 readme = "README.md"
@@ -20,7 +20,7 @@ dependencies = [
 train = ["bitsandbytes", "wandb", "scipy"]
 
 [project.urls]
-"Homepage" = "https://github.com/FasterDecoding/Medusa"
+"Homepage" = "https://github.com/Kthyeon/Turbo-loaa"
 "Blog" = "https://sites.google.com/view/medusa-llm"
 
 [tool.setuptools.packages.find]

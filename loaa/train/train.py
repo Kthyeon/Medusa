@@ -148,6 +148,11 @@ class TrainingArguments(transformers.TrainingArguments):
         metadata={"help": "Width of the loaa head."},
     )
 
+    short_cut: bool = field(
+        default=False,
+        metadata={"help": "Use shortcut for training."},
+    )
+
 
 local_rank = None
 
@@ -355,7 +360,7 @@ def train():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
 
-    name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}"
+    name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}"
     group = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}"
 
     # wandb initialization
@@ -394,13 +399,14 @@ def train():
         loaa_num_layers=training_args.loaa_num_layers,
         loaa_width = training_args.loaa_width,
         base_model_name_or_path=model_args.model_name_or_path,
+        shortcut = training_args.short_cut
     )
 
     # Add loaa heads
     loaa_lm_head = LoaaModel(loaa_config, model)
 
     # Format output dir
-    training_args.output_dir = f"{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}"
+    training_args.output_dir = f"/data/taehyeon/{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}"
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,

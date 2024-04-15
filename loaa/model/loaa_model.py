@@ -68,6 +68,7 @@ class LoaaConfig(PretrainedConfig):
         loaa_num_layers=1,
         loaa_width=4,
         base_model_name_or_path="lmsys/vicuna-7b-v1.3",
+        shortcut = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -77,6 +78,7 @@ class LoaaConfig(PretrainedConfig):
         self.base_model_name_or_path = base_model_name_or_path
         self.hidden_size = HIDDEN_SIZE[self.base_model_name_or_path]
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
+        self.shortcut = shortcut
 
 class LoaBlock(nn.Module):
     """
@@ -89,7 +91,7 @@ class LoaBlock(nn.Module):
         hidden_size (int): The size of the hidden layers in the block.
     """
 
-    def __init__(self, hidden_size, width = 0.25, loaa = 9, position = 0):
+    def __init__(self, hidden_size, width = 0.25, loaa = 9, position = 0, shortcut=True):
         super().__init__()
         assert hidden_size % width == 0, "hidden_size must be divisible by width"
 
@@ -98,9 +100,11 @@ class LoaBlock(nn.Module):
         self.exp = nn.Linear(int(hidden_size * width), hidden_size, bias = False)
         self.loaa = 9
         self.position = position
+        self.shortcut = shortcut
 
-        # Initialize as an identity mapping
-        # torch.nn.init.zeros_(self.exp.weight)
+        # Initialize as an zero mapping when using a shortcut
+        if shortcut:
+            torch.nn.init.zeros_(self.exp.weight)
 
         # Use SwiGLU activation to keep consistent with the Llama model
         self.act = nn.SiLU()
@@ -141,7 +145,10 @@ class LoaBlock(nn.Module):
         # Add broadcasting to handle batch size and convert pe to the same device as x
         # add positional encoding
         x[:, -1, :] += self.pe.unsqueeze(0)[:, self.position, :].to(x.device)
-        return self.exp(self.act(self.proj(x)))
+        if self.shortcut:
+            return self.exp(self.act(self.proj(x))) + x
+        else:
+            return self.exp(self.act(self.proj(x)))
 
 
 class LoaaModel(nn.Module):
@@ -185,7 +192,7 @@ class LoaaModel(nn.Module):
         self.loaa_head = nn.ModuleList(
             [
                 nn.Sequential(
-                    *([LoaBlock(self.hidden_size, config.loaa_width, self.loaa, position)] * loaa_num_layers),
+                    *([LoaBlock(self.hidden_size, config.loaa_width, self.loaa, position, config.shortcut)] * loaa_num_layers),
                 )
                 for position in range(loaa_num_heads)
             ]
@@ -221,7 +228,8 @@ class LoaaModel(nn.Module):
                 **kwargs,
                 config=config,
             )
-        except:
+        except Exception as e:
+            print(f"Error: {e}")
             config = LoaaConfig.from_pretrained(pretrained_model_name_or_path)
             base_model_config = AutoConfig.from_pretrained(config.base_model_name_or_path)
             base_model_config.loaa_num_heads = 9
