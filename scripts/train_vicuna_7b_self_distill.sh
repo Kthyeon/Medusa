@@ -2,8 +2,8 @@
 
 # Define the arrays for loaa_num_heads and loaa_width
 loaa_num_heads=(6)
-loaa_width=(0.25 0.5)
-loaa_shortcut=(False)
+loaa_width=(2.0)
+loaa_shortcut=(False True)
 
 for shortcut in "${loaa_shortcut[@]}"; do
     for num_heads in "${loaa_num_heads[@]}"; do

@@ -1,6 +1,10 @@
 # # open server 
 # CUDA_VISIBLE_DEVICES=6 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192
 # CUDA_VISIBLE_DEVICES=7 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8001 --max-model-len 8192
+
+# CUDA_VISIBLE_DEVICES=2 python -m vllm.entrypoints.openai.api_server --model /data/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192
+# CUDA_VISIBLE_DEVICES=3 python -m vllm.entrypoints.openai.api_server --model /data/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8001 --max-model-len 8192
+
 # CUDA_VISIBLE_DEVICES=4,5 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192 --tensor-parallel-size=2
 # generate data
 # simplify below code and would like to make each commands with 5 times (for random seed)

@@ -126,7 +126,7 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    cache_dir: Optional[str] = field(default='/mnt/data1/taehyeon/')
+    cache_dir: Optional[str] = field(default='/data/taehyeon/')
     report_to: Optional[str] = None
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
@@ -410,7 +410,7 @@ def train():
         loaa_num_layers=training_args.loaa_num_layers,
         loaa_width = training_args.loaa_width,
         base_model_name_or_path=model_args.model_name_or_path,
-        shortcut = training_args.short_cut
+        shortcut = training_args.short_cut,
         cache_dir=training_args.cache_dir,
     )
 

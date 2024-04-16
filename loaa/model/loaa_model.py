@@ -77,7 +77,7 @@ class LoaaConfig(PretrainedConfig):
         self.loaa_num_layers = loaa_num_layers
         self.loaa_width = loaa_width
         self.base_model_name_or_path = base_model_name_or_path
-        self.address = os.path.join(cache_dir, ADDRESS[self.base_model_name_or_path])
+        self.address = ADDRESS[self.base_model_name_or_path]
         self.hidden_size = HIDDEN_SIZE[self.base_model_name_or_path]
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
         self.shortcut = shortcut
