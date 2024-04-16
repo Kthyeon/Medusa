@@ -16,6 +16,7 @@ import argparse
 import transformers
 from loaa.model.loaa_model import LoaaModel, LoaaConfig
 from safetensors.torch import load_file
+from loaa.model.modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 
 
 def get_accuracies(loaa, logit):
@@ -34,7 +35,7 @@ def main(args):
         cache_dir=args.cache_dir,
     )
 
-    model = transformers.AutoModelForCausalLM.from_pretrained(
+    model = KVLlamaForCausalLM.from_pretrained(
         args.model_name_or_path,
         config=config,
         cache_dir=args.cache_dir,
@@ -46,7 +47,7 @@ def main(args):
         loaa_num_layers=1,
         loaa_width = args.loaa_width,
         base_model_name_or_path=args.model_name_or_path,
-        shortcut = False,
+        shortcut = args.shortcut,
         cache_dir=args.cache_dir,
     )
 
@@ -130,6 +131,8 @@ if __name__ == "__main__":
                         help="Directory to save the results.")
     parser.add_argument("--steps", type=int, default=20,
                         help="Number of steps to run the model.")
+    parser.add_argument("--shortcut", action="store_true",
+                        help="Use shortcut for loaa.")
     args = parser.parse_args()
 
     # If the save directory doesn't exist, create it
