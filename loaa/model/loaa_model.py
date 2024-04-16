@@ -77,9 +77,7 @@ class LoaaConfig(PretrainedConfig):
         self.loaa_num_layers = loaa_num_layers
         self.loaa_width = loaa_width
         self.base_model_name_or_path = base_model_name_or_path
-
-        if cache_dir is not None:
-           ADDRESS[self.base_model_name_or_path] = os.path.join(cache_dir, ADDRESS[self.base_model_name_or_path])
+        self.address = os.path.join(cache_dir, ADDRESS[self.base_model_name_or_path])
         self.hidden_size = HIDDEN_SIZE[self.base_model_name_or_path]
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
         self.shortcut = shortcut
@@ -189,8 +187,8 @@ class LoaaModel(nn.Module):
         self.loaa = loaa_num_heads
         self.loaa_num_layers = loaa_num_layers
         self.base_model_name_or_path = base_model_name_or_path
-        self.tokenizer_address = ADDRESS[self.base_model_name_or_path]
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_address)
+        self.tokenizer_address = config.address
+        self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name_or_path)
         self.base_model = model
         # Create a list of Loaa heads
         self.loaa_head = nn.ModuleList(
@@ -300,18 +298,17 @@ class LoaaModel(nn.Module):
         #     )
         with torch.inference_mode():
             # Pass input through the base model
-            outputs = self.base_model(
+            outputs = self.base_model.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 position_ids=position_ids,
-                output_hidden_states=True,
                 **kwargs,
             )
 
         # Clone the output hidden states
         # (batch_size, seq_len, hidden_size)
-        hidden_states = outputs.hidden_states[-1].clone()
+        hidden_states = outputs[0].clone()
         _loaa_hidden = [hidden_states]
         # TODO (@taehyeonk): Consider parallelizing this loop for efficiency
         for i in range(self.loaa):
@@ -321,7 +318,7 @@ class LoaaModel(nn.Module):
         # sharing LM Heads
         orig, loaa_logits = _loaa_hidden[0], _loaa_hidden[1:]
         if output_orig:
-            return torch.stack(loaa_logits, dim=0), outputs, orig
+            return torch.stack(loaa_logits, dim=0), outputs, self.base_model.lm_head(orig)
         return torch.stack(loaa_logits, dim=0)
 
 
