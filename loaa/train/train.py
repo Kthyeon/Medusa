@@ -126,7 +126,7 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    cache_dir: Optional[str] = field(default='/data/taehyeon/')
+    cache_dir: Optional[str] = field(default='/mnt/data1/taehyeon/')
     report_to: Optional[str] = None
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
@@ -387,7 +387,18 @@ def train():
         config=config,
         cache_dir=training_args.cache_dir,
         torch_dtype=torch.bfloat16,
+        resume_download=True,
     )
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+        use_fast=True,
+    )
+    tokenizer.pad_token = tokenizer.unk_token
+
 
     # Freeze the base model
     for param in model.base_model.parameters():
@@ -400,22 +411,18 @@ def train():
         loaa_width = training_args.loaa_width,
         base_model_name_or_path=model_args.model_name_or_path,
         shortcut = training_args.short_cut
+        cache_dir=training_args.cache_dir,
     )
 
     # Add loaa heads
     loaa_lm_head = LoaaModel(loaa_config, model)
 
     # Format output dir
-    training_args.output_dir = f"/data/taehyeon/{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}"
+    training_args.output_dir = f"/data/taehyeon/{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}" \
+                                f"_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}" \
+                                f"_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}" \
+                                f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}"
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        use_fast=True,
-    )
-    tokenizer.pad_token = tokenizer.unk_token
 
     # Load data
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)

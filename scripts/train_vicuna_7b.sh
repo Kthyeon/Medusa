@@ -9,7 +9,7 @@ for num_heads in "${loaa_num_heads[@]}"; do
     # Inside that loop, iterate over each value of loaa_width
     for width in "${loaa_width[@]}"; do
         # Execute the training command with the current values of loaa_num_heads and loaa_width
-        CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master_port 29600 loaa/train/train.py --model_name_or_path lmsys/vicuna-7b-v1.3 \
+        CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 --master_port 29600 loaa/train/train.py --model_name_or_path lmsys/vicuna-7b-v1.3 \
             --data_path ShareGPT_Vicuna_unfiltered/ShareGPT_V4.3_unfiltered_cleaned_split.json \
             --bf16 True \
             --output_dir test \

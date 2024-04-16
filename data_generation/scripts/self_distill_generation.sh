@@ -1,6 +1,6 @@
 # # open server 
-# CUDA_VISIBLE_DEVICES=4 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192
-# CUDA_VISIBLE_DEVICES=5 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8001 --max-model-len 8192
+# CUDA_VISIBLE_DEVICES=6 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192
+# CUDA_VISIBLE_DEVICES=7 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8001 --max-model-len 8192
 # CUDA_VISIBLE_DEVICES=4,5 python -m vllm.entrypoints.openai.api_server --model /mnt/data1/taehyeon/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6 --port 8000 --max-model-len 8192 --tensor-parallel-size=2
 # generate data
 # simplify below code and would like to make each commands with 5 times (for random seed)
@@ -23,8 +23,8 @@ max_tokens=2048 # 8192
 base_command="python ./data_generation/generate.py" 
 
 # Loop for temperatures in increments of 0.1
-for temp in $(seq 0.3 0.1 1.0); do
-    for seed in {1..5}; do  # Loop for 5 random seeds
+for temp in $(seq 0.7 0.1 1.0); do
+    for seed in {1..3}; do  # Loop for 5 random seeds
         output_path="${output_prefix}_${temp}_seed${seed}.json"
         command="${base_command} --data_path ${data_path} --output_path ${output_path} --num_threads ${num_threads} --max_tokens ${max_tokens} --temperature ${temp} --chat"
 

@@ -60,6 +60,7 @@ def generate_data(id, messages, idx):
     except Exception as e:
         print(f"Failed to generate data: {str(e)}")
 
+
 def process_chat_messages(id, messages, model_name):
     converted_messages = []
     output_messages = []

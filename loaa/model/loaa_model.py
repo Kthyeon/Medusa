@@ -21,7 +21,7 @@ from huggingface_hub import hf_hub_download
 import warnings
 
 ADDRESS = {
-    'lmsys/vicuna-7b-v1.3': '/data/taehyeon/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
+    'lmsys/vicuna-7b-v1.3': '/models--lmsys--vicuna-7b-v1.3/snapshots/236eeeab96f0dc2e463f2bebb7bb49809279c6d6'
 }
 
 HIDDEN_SIZE = {
@@ -69,6 +69,7 @@ class LoaaConfig(PretrainedConfig):
         loaa_width=4,
         base_model_name_or_path="lmsys/vicuna-7b-v1.3",
         shortcut = True,
+        cache_dir=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -76,6 +77,9 @@ class LoaaConfig(PretrainedConfig):
         self.loaa_num_layers = loaa_num_layers
         self.loaa_width = loaa_width
         self.base_model_name_or_path = base_model_name_or_path
+
+        if cache_dir is not None:
+           ADDRESS[self.base_model_name_or_path] = os.path.join(cache_dir, ADDRESS[self.base_model_name_or_path])
         self.hidden_size = HIDDEN_SIZE[self.base_model_name_or_path]
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
         self.shortcut = shortcut
@@ -187,7 +191,7 @@ class LoaaModel(nn.Module):
         self.base_model_name_or_path = base_model_name_or_path
         self.tokenizer_address = ADDRESS[self.base_model_name_or_path]
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_address)
-        self.model = model
+        self.base_model = model
         # Create a list of Loaa heads
         self.loaa_head = nn.ModuleList(
             [
@@ -209,9 +213,9 @@ class LoaaModel(nn.Module):
         )
 
     # Add a link named base_model to self
-    @property
-    def base_model(self):
-        return self
+    # @property
+    # def base_model(self):
+    #     return self
     @classmethod
     def from_pretrained(
         cls,
@@ -296,7 +300,7 @@ class LoaaModel(nn.Module):
         #     )
         with torch.inference_mode():
             # Pass input through the base model
-            outputs = self.base_model.model(
+            outputs = self.base_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 past_key_values=past_key_values,
@@ -306,12 +310,13 @@ class LoaaModel(nn.Module):
             )
 
         # Clone the output hidden states
-        hidden_states = outputs[1][-1].clone() # (batch_size, seq_len, hidden_size)
+        # (batch_size, seq_len, hidden_size)
+        hidden_states = outputs.hidden_states[-1].clone()
         _loaa_hidden = [hidden_states]
         # TODO (@taehyeonk): Consider parallelizing this loop for efficiency
         for i in range(self.loaa):
-            # positional embedding + low-rank look-ahead block
-            _loaa_hidden.append(self.base_model.model.lm_head(self.loaa_head[i](hidden_states.clone())))
+            # _pos_tmp = self.position_embedding[i](hidden_states.clone())
+            _loaa_hidden.append(self.base_model.lm_head(self.loaa_head[i](hidden_states.clone())))
 
         # sharing LM Heads
         orig, loaa_logits = _loaa_hidden[0], _loaa_hidden[1:]

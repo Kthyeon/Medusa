@@ -13,6 +13,10 @@ import torch.nn.functional as F
 from fastchat.model.model_adapter import get_conversation_template
 from tqdm import tqdm
 import argparse
+import transformers
+from loaa.model.loaa_model import LoaaModel, LoaaConfig
+from safetensors.torch import load_file
+
 
 def get_accuracies(loaa, logit):
     # get the correct counts of each head
@@ -25,18 +29,40 @@ def get_accuracies(loaa, logit):
 
 
 def main(args):
-    model = LoaaModel.from_pretrained(
-        args.model_path,
-        loaa_num_heads=args.loaa_num_heads,
-        loaa_width=args.loaa_width,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-        device_map="auto"
+    config = transformers.AutoConfig.from_pretrained(
+        args.model_name_or_path,
+        cache_dir=args.cache_dir,
     )
+
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        args.model_name_or_path,
+        config=config,
+        cache_dir=args.cache_dir,
+        torch_dtype=torch.bfloat16,
+    )
+
+    loaa_config = LoaaConfig(
+        loaa_num_heads=args.loaa_num_heads,
+        loaa_num_layers=1,
+        loaa_width = args.loaa_width,
+        base_model_name_or_path=args.model_name_or_path,
+        shortcut = False,
+        cache_dir=args.cache_dir,
+    )
+
+    model = LoaaModel(loaa_config, model)
+    state_dict = load_file(args.loaa_path)
+    model.loaa_head.load_state_dict(state_dict, strict=True)
+    model.loaa_head = model.loaa_head.bfloat16()
+
+    model = model.cuda()
     tokenizer = model.get_tokenizer()
 
 
-    data = json.load(open(args.data_path))
+    data = []
+    with open(args.data_path, 'r') as file:
+        for line in file:
+            data.append(json.loads(line))
     past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model.base_model)
     model.past_key_values = past_key_values
     model.past_key_values_data = past_key_values_data
@@ -46,7 +72,7 @@ def main(args):
     for sample in tqdm((data)):
         conv = get_conversation_template("vicuna")
         conv.messages = []
-        conv.append_message(conv.roles[0], sample["instruction"])
+        conv.append_message(conv.roles[0], sample["turns"][0])
         conv.append_message(conv.roles[1], "")
         prompt = conv.get_prompt()
         steps = args.steps
@@ -59,7 +85,7 @@ def main(args):
             model.current_length_data.zero_() # this is for rerun
             reset_loaa_mode(model)
             loaa_logits, outputs, logits = model(
-                input_ids, past_key_values=past_key_values, output_orig=True, loaa_forward=True
+                input_ids, past_key_values=past_key_values, output_orig=True
             )
             _, loaa_topk = loaa_logits[...,-1,:].topk(20, dim=-1)
             input_id = logits[:, -1:].argmax(dim=-1)
@@ -67,7 +93,7 @@ def main(args):
             loaa_topk_ids.append(loaa_topk.detach().cpu())
             for _ in range(steps):
                 loaa_logits, outputs, logits = model(
-                    input_id, past_key_values=past_key_values, output_orig=True, loaa_forward=True
+                    input_id, past_key_values=past_key_values, output_orig=True
                 )
                 _, loaa_topk = loaa_logits[...,-1,:].topk(20, dim=-1)
                 input_id = logits[:, -1:].argmax(dim=-1)
@@ -83,17 +109,18 @@ def main(args):
                 for i in range(len(results)):
                     results[i] = torch.cat((results[i], cur_results[i]), dim=0)
 
-    save_path = os.path.join(args.save_dir, args.model_name + "_heads_accuracy.pt")
+    save_path = os.path.join(args.save_dir, f"{args.loaa_path.split("/")[-2]}_heads_accuracy.pt")
     torch.save(results, save_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Loaa Model Evaluator")
-
-    parser.add_argument("--model_path", type=str, required=True,
-                        help="Path to the pre-trained Loaa model.")
-    parser.add_argument("--model_name", type=str, required=True,
-                        help="Name of the model.")
-    parser.add_argument("--loaa_num_heads", type=int, default=5,
+    parser.add_argument("--cache_dir", type=str, default='/mnt/data1/taehyeon/',
+                        help="huggingface cache dir")
+    parser.add_argument("--model_name_or_path", type=str, required=True,
+                        help="Path to the target pre-trained model.")
+    parser.add_argument("--loaa_path", type=str, required=True,
+                        help="Path to loaa heads")
+    parser.add_argument("--loaa_num_heads", type=int, default=6,
                         help="Number of loaa heads.")
     parser.add_argument("--loaa_width", type=float, default=0.25,
                         help="projection width of the loaa heads.")
