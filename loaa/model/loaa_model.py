@@ -224,8 +224,9 @@ class LoaBlock(nn.Module):
 
         self.att = MultiHeadAttention(int(hidden_size * width))
 
-        self.mlp = nn.Linear(int(hidden_size * width), hidden_size, bias=False)
-        self.mlp2 = nn.Linear(hidden_size, int(hidden_size * width), bias=False)
+        exp_ratio = 4
+        self.mlp = nn.Linear(int(hidden_size * width), int(hidden_size * width) * exp_ratio, bias=False)
+        self.mlp2 = nn.Linear(int(hidden_size * width) * exp_ratio, int(hidden_size * width), bias=False)
 
         self.exp = GroupedLinear(int(hidden_size * width), hidden_size, groups=self.loaa, position=False)
         self.shortcut = shortcut
