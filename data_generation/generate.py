@@ -76,6 +76,8 @@ def process_chat_messages(id, messages, model_name):
             process_conversation(model_name, converted_messages, output_messages, message)
         except Exception as e:
             print(f"Conversation processing failed: {str(e)}")
+            # reset output_messages even first gpt's response is contained
+            output_messages = []
             break
     
     write_output_if_not_empty(output_messages, id)
