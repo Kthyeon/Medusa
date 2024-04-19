@@ -43,9 +43,6 @@ from loaa.model.loaa_model import LoaaModel, LoaaConfig
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
-VICUNA_CHAT_TEMPLATE = open('./vicuna.jinja').read()
-VICUNA_CHAT_TEMPLATE = VICUNA_CHAT_TEMPLATE.replace('    ', '').replace('\n', '')
-
 # Customized for training loaa heads
 class CustomizedTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -74,21 +71,22 @@ class CustomizedTrainer(Trainer):
         loss = 0
         loss_fct = CrossEntropyLoss()
         log = {}
-
+        coeff = 0.9
 
         for i in range(loaa):
             loaa_logits = logits[i, :, : -(2 + i)].contiguous()
             loaa_labels = labels[..., 2 + i :].contiguous()
+            # original loss
             loaa_logits = loaa_logits.view(-1, logits.shape[-1])
             loaa_labels = loaa_labels.view(-1)
             loaa_labels = loaa_labels.to(loaa_logits.device)
             loss_i = loss_fct(loaa_logits, loaa_labels)
-            loss += loss_i
+            loss += coeff ** i * loss_i # (@taehyeonk) changed to exponential decay
             not_ignore = loaa_labels.ne(IGNORE_TOKEN_ID)
             loaa_labels = loaa_labels[not_ignore]
 
             # Add top-k accuracy
-            for k in range(1, 2):
+            for k in range(1, 5):
                 _, topk = loaa_logits.topk(k, dim=-1)
                 topk = topk[not_ignore]
                 correct = topk.eq(loaa_labels.unsqueeze(-1)).any(-1)
@@ -360,7 +358,10 @@ def train():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
 
-    name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}"
+    name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_" \
+            f"lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}" \
+            f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}" \
+            f"_wd_{training_args.weight_decay}"
     group = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}"
 
     # wandb initialization
@@ -421,7 +422,8 @@ def train():
     training_args.output_dir = f"/data/taehyeon/{training_args.output_dir}_loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}" \
                                 f"_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}" \
                                 f"_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}" \
-                                f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}"
+                                f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}" \
+                                f"_wd_{training_args.weight_decay}"
 
 
     # Load data
@@ -440,7 +442,7 @@ def train():
     else:
         trainer.train()
     model.config.use_cache = True
-    # trainer.save_state()
+
     # safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
     # Save loaaHead seperately
     if hasattr(loaa_lm_head, "module"):
