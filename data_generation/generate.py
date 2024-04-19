@@ -60,7 +60,6 @@ def generate_data(id, messages, idx):
     except Exception as e:
         print(f"Failed to generate data: {str(e)}")
 
-
 def process_chat_messages(id, messages, model_name):
     converted_messages = []
     output_messages = []
@@ -118,40 +117,48 @@ def write_output_if_not_empty(output_messages, id):
     else:
         print("No messages to output.")
 
-def process_non_chat_messages(messages, model_name):
+def process_non_chat_messages(id, messages, model_name):
     try:
         conv = get_conversation_template(model_name)
+        output_messages = []
+        
         if messages[0]["from"] == "system":
-            conv.system_message = messages[0]["text"]
+            conv.system_message = messages[0]["value"]
+            output_messages.append(messages[0])  # Include the system message in the output
             messages = messages[1:]
 
         # Append user message to the conversation template
         conv.append_message(conv.roles[0], messages[0]["value"])
+        output_messages.append({"from": "human", "value": messages[0]["value"]})
+        
         # Append a placeholder for the assistant's response
         conv.append_message(conv.roles[1], None)
         
         prompt = conv.get_prompt()
+        # remove eos token
+        prompt = prompt.rstrip('</s>')
         response = openai.Completion.create(
             model=model_name,
             prompt=prompt,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
-            ignore_eos=True,
+            ignore_eos=False,
             skip_special_tokens=False,
             spaces_between_special_tokens=False,
             request_timeout=60000
         )
         
         response_text = response.choices[0]['text'].strip()
-        save_response(prompt, response_text)
+        response_text = response_text.rstrip('</s>')
+        output_messages.append({"from": "gpt", "value": response_text})
+        write_output_if_not_empty(output_messages, id=id)
     except Exception as e:
         print(f"Non-chat message processing failed: {str(e)}")
 
-def save_response(prompt, response):
+def save_response(id, output_messages):
     with open(args.output_path, "a") as f:
-        # Write in shared GPT format, including the prompt and the model's completion
-        f.write(json.dumps({"text": prompt + response}) + "\n")
-
+        # Write in shared GPT format, including the prompt and the model's completions
+        f.write(json.dumps({"id": id, "conversations": output_messages}) + "\n")
 
 # if output_path exists, count the number of lines and skip the first n data
 start = 0
