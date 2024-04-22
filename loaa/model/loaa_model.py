@@ -61,6 +61,7 @@ class LoaaConfig(PretrainedConfig):
         base_model_name_or_path="lmsys/vicuna-7b-v1.3",
         shortcut = True,
         cache_dir=None,
+        autoregressive=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -72,13 +73,12 @@ class LoaaConfig(PretrainedConfig):
         self.hidden_size = HIDDEN_SIZE[self.base_model_name_or_path]
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
         self.shortcut = shortcut
+        self.autoregressive = autoregressive
 
 class GroupedLinear(nn.Module):
     def __init__(self, input_features, output_features, groups, position=True):
         super(GroupedLinear, self).__init__()
         self.groups = groups
-        # assert input_features % groups == 0, "input_features must be divisible by groups"
-        # assert output_features % groups == 0, "output_features must be divisible by groups"
 
         self.input_features = input_features
         self.output_features = output_features
@@ -86,7 +86,6 @@ class GroupedLinear(nn.Module):
         self.weights = nn.Parameter(torch.Tensor(groups,  self.input_features, self.output_features,))
         self.position = position
         if position:
-            # self.positional_embedding = self.get_sinusoidal_encoding()
             self.positional_embedding = nn.Parameter(torch.Tensor(self.input_features))
             nn.init.zeros_(self.positional_embedding)
         
@@ -176,31 +175,54 @@ class MultiHeadAttention(nn.Module):
         # Final linear layer to transform the concatenated outputs
         self.out = nn.Linear(o_dim * 4, o_dim)
 
-    def forward(self, x):
+        # Initialize cache as None
+        self.register_buffer("key_cache", None)
+        self.register_buffer("value_cache", None)
+
+    def forward(self, x, use_cache=False):
         # x shape: (batch_size, seq_length, num_groups, o_dim)
         b, l, g, o = x.shape
+        if use_cache:
+            block_length = 1
+        else:
+            block_length = g
 
         # Reshape x to merge batch and seq_length for simplicity in processing
-        x = x.view(-1, g, o)  # Shape: (b*l, g, o)
+        x_last_group = x[:, :, -block_length:, :].view(-1, block_length, o)  # Shape: (b*l, 1, o)
 
         # Compute queries, keys, values
-        Q = self.query(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)  # Shape: (b*l, num_heads, g, d_k)
-        K = self.key(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)    # Shape: (b*l, num_heads, g, d_k)
-        V = self.value(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)  # Shape: (b*l, num_heads, g, d_k)
+        Q = self.query(x_last_group).view(-1, self.num_heads, block_length, self.d_k).transpose(1, 2)
+        K = self.key(x_last_group).view(-1, self.num_heads, block_length, self.d_k).transpose(1, 2)
+        V = self.value(x_last_group).view(-1, self.num_heads, block_length, self.d_k).transpose(1, 2)
 
-        # Calculate attention scores
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)  # Scaling by sqrt(dim_k)
-        probs = F.softmax(scores, dim=-1)  # Shape: (b*l, num_heads, g, g)
+        # Cache logic
+        if use_cache:
+            if self.key_cache is None:
+                self.key_cache = K
+                self.value_cache = V
+            else:
+                self.key_cache = torch.cat([self.key_cache, K], dim=2)
+                self.value_cache = torch.cat([self.value_cache, V], dim=2)
+            K = self.key_cache
+            V = self.value_cache
+
+        # Calculate attention
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
+        probs = F.softmax(scores, dim=-1)
 
         # Apply attention to values
-        out = torch.matmul(probs, V)  # Shape: (b*l, num_heads, g, d_k)
-        out = out.transpose(1, 2).contiguous().view(-1, g, self.num_heads * self.d_k)  # Concatenate heads
+        out = torch.matmul(probs, V)
+        out = out.transpose(1, 2).contiguous().view(-1, self.num_heads * self.d_k)
 
-        # Final linear layer
+        # Final linear layer to match output dimensions
         out = self.out(out)
-        out = out.view(b, l, g, o)  # Reshape to original dimensions
+        out = out.view(b, l, block_length, o)  # Ensure dimensions match original input's shape
 
         return out
+    
+    def clear_cache(self):
+        self.key_cache = None
+        self.value_cache = None
 
 class LoaBlock(nn.Module):
     """
@@ -213,12 +235,16 @@ class LoaBlock(nn.Module):
         hidden_size (int): The size of the hidden layers in the block.
     """
 
-    def __init__(self, hidden_size, width = 1.0, loaa = 9, shortcut=True):
+    def __init__(self, hidden_size, width = 1.0, loaa = 9, shortcut=True, autoregressive=True):
         super().__init__()
         assert hidden_size % width == 0, "hidden_size must be divisible by width"
 
-        self.loaa = 9
-        self.proj = GroupedLinear(hidden_size, int(hidden_size * width), groups=self.loaa, position=True)
+        self.autoregressive = autoregressive
+        self.loaa = loaa
+        if self.autoregressive:
+            self.proj = GroupedLinear(hidden_size, int(hidden_size * width), groups=1, position=True)
+        else:
+            self.proj = GroupedLinear(hidden_size, int(hidden_size * width), groups=loaa, position=True)
         self.layernorm1 = nn.LayerNorm([int(hidden_size * width)], bias=False)
         self.layernorm2 = nn.LayerNorm([int(hidden_size * width)], bias=False)
 
@@ -251,9 +277,30 @@ class LoaBlock(nn.Module):
         """
         # Assuming x is of shape [batch_size, seq_length, embedding_size]
         # Add broadcasting to handle batch size and convert pe to the same device as x
+        # out: [b, l , 1, o]
         out = self.proj(x)
-        out = self.att(self.layernorm1(out)) + out
-        out = self.mlp2(self.act(self.mlp(self.layernorm2(out)))) + out
+        # do autoregressive inference
+        if self.autoregressive:
+            out_tmp = out.clone()  # Initialize out1 which will hold intermediate results
+            for i in range(self.loaa):
+                # Apply attention and add the result to the original output for the next step
+                # Only use cache during autoregressive inference
+                out1 = self.att(self.layernorm1(out_tmp), use_cache=self.autoregressive) + out_tmp
+                
+                # Apply MLP layers after normalization
+                out1 = self.mlp2(self.act(self.mlp(self.layernorm2(out1)))) + out1
+
+                # Concatenate the latest output with previous outputs along the group dimension
+                out_tmp = torch.cat([out_tmp, out1[:, :, -1,:].unsqueeze(2)], dim=2)
+
+            # After looping through all LOAA steps, update 'out' to be 'combined' trimmed to exclude initial 'out'
+            out = out_tmp[:, :, 1:, :]  # Trim the first group if necessary
+            self.att.clear_cache()  # Clear cache at the end of the autoregressive pass
+        else:
+            # Non-autoregressive path remains similar
+            out = self.att(self.layernorm1(out), use_cache=self.autoregressive) + out
+            out = self.mlp2(self.act(self.mlp(self.layernorm2(out)))) + out
+
 
         if self.shortcut:
             return torch.einsum("blgo->gblo", self.exp(out) + x.unsqueeze(2).repeat(1,1,self.loaa,1))
@@ -298,8 +345,9 @@ class LoaaModel(nn.Module):
         self.tokenizer_address = config.address
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name_or_path)
         self.base_model = model
+        self.autoregressive = config.autoregressive
         # Create a list of Loaa head
-        self.loaa_head = LoaBlock(self.hidden_size, config.loaa_width, self.loaa, config.shortcut)
+        self.loaa_head = LoaBlock(self.hidden_size, config.loaa_width, self.loaa, config.shortcut, self.autoregressive)
 
     # Add a link named base_model to self
     @classmethod
@@ -360,6 +408,7 @@ class LoaaModel(nn.Module):
         output_orig=False,
         position_ids=None,
         # loaa_forward=False,
+        hidden_states=False, # for loaa training with feature matching
         **kwargs,
     ):
         """Forward pass of the LoaaModel.
@@ -393,6 +442,8 @@ class LoaaModel(nn.Module):
 
         if output_orig:
             return loaa_logits, outputs, self.base_model.lm_head(outputs[0].clone())
+        if hidden_states:
+            return loaa_logits, grouped_hiddens, outputs[0].clone()
         return loaa_logits
 
     def get_loaa_choice(self, model_name):

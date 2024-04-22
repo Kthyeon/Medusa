@@ -40,15 +40,6 @@ class SwiGLU(nn.Module):
         x, gate = x.chunk(2, dim=-1)
         return F.silu(gate) * x
 
-class PositionEmbedding(nn.Module):
-
-    def __init__(self, hidden_size):
-        super(PositionEmbedding, self).__init__()
-        self.weight = nn.Parameter(torch.Tensor(hidden_size))
-
-    def forward(self, x):
-        x[:, -1, :] += self.weight
-        return x
 
 class LoaaConfig(PretrainedConfig):
     """
@@ -82,6 +73,135 @@ class LoaaConfig(PretrainedConfig):
         self.vocab_size = VOCAB_SIZE[self.base_model_name_or_path]
         self.shortcut = shortcut
 
+class GroupedLinear(nn.Module):
+    def __init__(self, input_features, output_features, groups, position=True):
+        super(GroupedLinear, self).__init__()
+        self.groups = groups
+        # assert input_features % groups == 0, "input_features must be divisible by groups"
+        # assert output_features % groups == 0, "output_features must be divisible by groups"
+
+        self.input_features = input_features
+        self.output_features = output_features
+
+        self.weights = nn.Parameter(torch.Tensor(groups,  self.input_features, self.output_features,))
+        self.position = position
+        if position:
+            # self.positional_embedding = self.get_sinusoidal_encoding()
+            self.positional_embedding = nn.Parameter(torch.Tensor(self.input_features))
+            nn.init.zeros_(self.positional_embedding)
+        
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weights, a=math.sqrt(5))
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weights)
+        bound = 1 / math.sqrt(fan_in)
+
+    def get_sinusoidal_encoding(self):
+        """
+        Generates sinusoidal positional encodings for a given sequence length.
+
+        Args:
+            seq_length (int): The length of the sequence.
+
+        Returns:
+            torch.Tensor: Sinusoidal positional encodings with shape [seq_length, input_features].
+        """
+        seq_length = self.groups
+        position = torch.arange(seq_length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.input_features, 2) * -(math.log(10000.0) / self.input_features))
+        pe = torch.zeros(seq_length, self.input_features)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return pe.unsqueeze(0).unsqueeze(0)
+
+    def forward(self, x):
+        batch_size, seq_len = x.shape[0], x.shape[1]
+        if len(x.shape) == 3:
+            x = x.unsqueeze(2).repeat(1,1,self.groups,1) # (batch_size, seq_len, groups, input_features)
+        elif len(x.shape) == 4:
+            assert x.shape[2] == self.groups, "Number of groups in input tensor does not match the number of groups in the layer"
+        if self.position:
+            output = torch.einsum('blgp,gpo->blgo', x + self.positional_embedding.to(x.device), self.weights)
+        else:
+            output = torch.einsum('blgp,gpo->blgo', x, self.weights)
+        return output
+
+class SelfAttention(nn.Module):
+    def __init__(self, o_dim):
+        super(SelfAttention, self).__init__()
+        self.query = nn.Linear(o_dim, o_dim)
+        self.key = nn.Linear(o_dim, o_dim)
+        # self.value = nn.Linear(o_dim, o_dim)
+    
+    def forward(self, x):
+        # x shape: (b, l, g, o)
+        b, l, g, o = x.shape
+        
+        # Reshape x to merge b and l for simplicity in processing
+        x = x.view(-1, g, o)  # Shape: (b*l, g, o)
+        
+        # Compute queries, keys, values
+        Q = self.query(x)  # Shape: (b*l, g, o)
+        K = self.key(x)    # Shape: (b*l, g, o)
+        # V = self.value(x)  # Shape: (b*l, g, o)
+        
+        # Calculate attention scores
+        # Perform batch matrix multiplication bmm(Q, K.transpose(-2, -1)) -> Shape: (b*l, g, g)
+        scores = torch.bmm(Q, K.transpose(1, 2)) / (o ** 0.5)  # Scaling by sqrt(dim)
+        probs = F.softmax(scores, dim=-1)  # Shape: (b*l, g, g)
+        
+        # Apply attention to values
+        out = torch.bmm(probs, x)  # Shape: (b*l, g, o)
+        
+        # Reshape to original dimensions
+        out = out.view(b, l, g, o)  # Shape: (b, l, g, o)
+        return out
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, o_dim, num_heads=16):
+        super(MultiHeadAttention, self).__init__()
+        self.num_heads = num_heads
+        self.o_dim = o_dim
+        self.d_k = o_dim * 4 // num_heads  # Dimension of each head
+
+        # Ensure the output dimension is divisible by the number of heads
+        assert o_dim % num_heads == 0, "Output dimension must be divisible by the number of heads."
+
+        # Linear layers for queries, keys, and values
+        self.query = nn.Linear(o_dim, o_dim * 4)
+        self.key = nn.Linear(o_dim, o_dim * 4)
+        self.value = nn.Linear(o_dim, o_dim * 4)
+
+        # Final linear layer to transform the concatenated outputs
+        self.out = nn.Linear(o_dim * 4, o_dim)
+
+    def forward(self, x):
+        # x shape: (batch_size, seq_length, num_groups, o_dim)
+        b, l, g, o = x.shape
+
+        # Reshape x to merge batch and seq_length for simplicity in processing
+        x = x.view(-1, g, o)  # Shape: (b*l, g, o)
+
+        # Compute queries, keys, values
+        Q = self.query(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)  # Shape: (b*l, num_heads, g, d_k)
+        K = self.key(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)    # Shape: (b*l, num_heads, g, d_k)
+        V = self.value(x).view(-1, g, self.num_heads, self.d_k).transpose(1, 2)  # Shape: (b*l, num_heads, g, d_k)
+
+        # Calculate attention scores
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)  # Scaling by sqrt(dim_k)
+        probs = F.softmax(scores, dim=-1)  # Shape: (b*l, num_heads, g, g)
+
+        # Apply attention to values
+        out = torch.matmul(probs, V)  # Shape: (b*l, num_heads, g, d_k)
+        out = out.transpose(1, 2).contiguous().view(-1, g, self.num_heads * self.d_k)  # Concatenate heads
+
+        # Final linear layer
+        out = self.out(out)
+        out = out.view(b, l, g, o)  # Reshape to original dimensions
+
+        return out
+
 class LoaBlock(nn.Module):
     """
     A Low-Rank Look-Ahead Block module.
@@ -93,44 +213,30 @@ class LoaBlock(nn.Module):
         hidden_size (int): The size of the hidden layers in the block.
     """
 
-    def __init__(self, hidden_size, width = 0.25, loaa = 9, position = 0, shortcut=True):
+    def __init__(self, hidden_size, width = 1.0, loaa = 9, shortcut=True):
         super().__init__()
         assert hidden_size % width == 0, "hidden_size must be divisible by width"
 
-        self.proj = nn.Linear(hidden_size, int(hidden_size * width), bias = False)
-        # self.pointwise = nn.Linear(hidden_size * width, hidden_size * width, bias = False)
-        self.exp = nn.Linear(int(hidden_size * width), hidden_size, bias = False)
-        self.loaa = 9
-        self.position = position
+        self.loaa = loaa
+        self.proj = GroupedLinear(hidden_size, int(hidden_size * width), groups=self.loaa, position=True)
+        self.layernorm1 = nn.LayerNorm([int(hidden_size * width)], bias=False)
+        self.layernorm2 = nn.LayerNorm([int(hidden_size * width)], bias=False)
+
+        self.att = MultiHeadAttention(int(hidden_size * width))
+
+        exp_ratio = 4
+        self.mlp = nn.Linear(int(hidden_size * width), int(hidden_size * width) * exp_ratio, bias=False)
+        self.mlp2 = nn.Linear(int(hidden_size * width) * exp_ratio, int(hidden_size * width), bias=False)
+
+        self.exp = GroupedLinear(int(hidden_size * width), hidden_size, groups=self.loaa, position=False)
         self.shortcut = shortcut
 
-        # Initialize as an zero mapping when using a shortcut
+        # Initialize as an zero mapping when usin4g a shortcut
         if shortcut:
-            torch.nn.init.zeros_(self.exp.weight)
+            torch.nn.init.zeros_(self.exp.weights)
 
         # Use SwiGLU activation to keep consistent with the Llama model
         self.act = nn.SiLU()
-
-        self.embedding_size = hidden_size
-        self.pe = self.get_sinusoidal_encoding()
-        
-    def get_sinusoidal_encoding(self):
-        """
-        Generates sinusoidal positional encodings for a given sequence length.
-
-        Args:
-            seq_length (int): The length of the sequence.
-
-        Returns:
-            torch.Tensor: Sinusoidal positional encodings with shape [seq_length, embedding_size].
-        """
-        seq_length = self.loaa
-        position = torch.arange(seq_length).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, self.embedding_size, 2) * -(math.log(10000.0) / self.embedding_size))
-        pe = torch.zeros(seq_length, self.embedding_size)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        return pe
 
     def forward(self, x):
         """
@@ -145,12 +251,14 @@ class LoaBlock(nn.Module):
         """
         # Assuming x is of shape [batch_size, seq_length, embedding_size]
         # Add broadcasting to handle batch size and convert pe to the same device as x
-        # add positional encoding
-        x[:, -1, :] += self.pe.unsqueeze(0)[:, self.position, :].to(x.device)
+        out = self.proj(x)
+        out = self.att(self.layernorm1(out)) + out
+        out = self.mlp2(self.act(self.mlp(self.layernorm2(out)))) + out
+
         if self.shortcut:
-            return self.exp(self.act(self.proj(x))) + x
+            return torch.einsum("blgo->gblo", self.exp(out) + x.unsqueeze(2).repeat(1,1,self.loaa,1))
         else:
-            return self.exp(self.act(self.proj(x)))
+            return torch.einsum("blgo->gblo", self.exp(out))
 
 
 class LoaaModel(nn.Module):
@@ -190,30 +298,10 @@ class LoaaModel(nn.Module):
         self.tokenizer_address = config.address
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name_or_path)
         self.base_model = model
-        # Create a list of Loaa heads
-        self.loaa_head = nn.ModuleList(
-            [
-                nn.Sequential(
-                    *([LoaBlock(self.hidden_size, config.loaa_width, self.loaa, position, config.shortcut)] * loaa_num_layers),
-                )
-                for position in range(loaa_num_heads)
-            ]
-        )
-        self.position_embedding = nn.ModuleList(
-            [
-                nn.Sequential(
-                    PositionEmbedding(self.hidden_size),
-                )
-                for _ in range(loaa_num_heads)
-            ]
-
-
-        )
+        # Create a list of Loaa head
+        self.loaa_head = LoaBlock(self.hidden_size, config.loaa_width, self.loaa, config.shortcut)
 
     # Add a link named base_model to self
-    # @property
-    # def base_model(self):
-    #     return self
     @classmethod
     def from_pretrained(
         cls,
@@ -288,14 +376,7 @@ class LoaaModel(nn.Module):
             torch.Tensor: A tensor containing predictions from all Loaa heads.
             (Optional) Original predictions from the base model's LM head.
         """
-        # if not loaa_forward:
-        #     return super().forward(
-        #         input_ids=input_ids,
-        #         attention_mask=attention_mask,
-        #         past_key_values=past_key_values,
-        #         position_ids=position_ids,
-        #         **kwargs,
-        #     )
+
         with torch.inference_mode():
             # Pass input through the base model
             outputs = self.base_model.model(
@@ -305,22 +386,14 @@ class LoaaModel(nn.Module):
                 position_ids=position_ids,
                 **kwargs,
             )
-
-        # Clone the output hidden states
         # (batch_size, seq_len, hidden_size)
-        hidden_states = outputs[0].clone()
-        _loaa_hidden = [hidden_states]
-        # TODO (@taehyeonk): Consider parallelizing this loop for efficiency
-        for i in range(self.loaa):
-            # _pos_tmp = self.position_embedding[i](hidden_states.clone())
-            _loaa_hidden.append(self.base_model.lm_head(self.loaa_head[i](hidden_states.clone())))
-
+        grouped_hiddens = self.loaa_head(outputs[0].clone())
         # sharing LM Heads
-        orig, loaa_logits = _loaa_hidden[0], _loaa_hidden[1:]
-        if output_orig:
-            return torch.stack(loaa_logits, dim=0), outputs, self.base_model.lm_head(orig)
-        return torch.stack(loaa_logits, dim=0)
+        loaa_logits = torch.einsum('gblo,ov->gblv', grouped_hiddens, self.base_model.lm_head.weight.T)
 
+        if output_orig:
+            return loaa_logits, outputs, self.base_model.lm_head(outputs[0].clone())
+        return loaa_logits
 
     def get_loaa_choice(self, model_name):
         """

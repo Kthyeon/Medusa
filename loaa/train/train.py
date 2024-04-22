@@ -145,10 +145,13 @@ class TrainingArguments(transformers.TrainingArguments):
         default=0.25,
         metadata={"help": "Width of the loaa head."},
     )
-
     short_cut: bool = field(
         default=False,
         metadata={"help": "Use shortcut for training."},
+    )
+    autoregressive: bool = field(
+        default=False,
+        metadata={"help": "Use autoregressive training."},
     )
 
 
@@ -361,7 +364,7 @@ def train():
     name = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}_loaa_{training_args.loaa_num_heads}_" \
             f"lr_{training_args.learning_rate}_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}" \
             f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}" \
-            f"_wd_{training_args.weight_decay}"
+            f"_wd_{training_args.weight_decay}_autoregressive_{training_args.autoregressive}"
     group = f"loaa_mlp_{model_args.model_name_or_path.split('/')[-1]}"
 
     # wandb initialization
@@ -412,6 +415,7 @@ def train():
         loaa_width = training_args.loaa_width,
         base_model_name_or_path=model_args.model_name_or_path,
         shortcut = training_args.short_cut,
+        autoregressive = training_args.autoregressive,
         cache_dir=training_args.cache_dir,
     )
 
@@ -423,7 +427,7 @@ def train():
                                 f"_loaa_{training_args.loaa_num_heads}_lr_{training_args.learning_rate}" \
                                 f"_layers_{training_args.loaa_num_layers}_width_{training_args.loaa_width}" \
                                 f"_shortcut_{training_args.short_cut}_datapath_{data_args.data_path.split('/')[-1]}" \
-                                f"_wd_{training_args.weight_decay}"
+                                f"_wd_{training_args.weight_decay}_autoregressive_{training_args.autoregressive}"
 
 
     # Load data
