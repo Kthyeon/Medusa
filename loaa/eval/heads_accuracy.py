@@ -3,10 +3,13 @@ import torch
 import json
 from contextlib import contextmanager
 import numpy as np
-from loaa.model.loaa_model import LoaaModel
+
 from loaa.model.kv_cache import *
 from loaa.model.utils import *
 from loaa.model.loaa_choices import *
+from loaa.model.loaa_model import LoaaModel, LoaaConfig
+from loaa.model.modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
+
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -14,9 +17,9 @@ from fastchat.model.model_adapter import get_conversation_template
 from tqdm import tqdm
 import argparse
 import transformers
-from loaa.model.loaa_model import LoaaModel, LoaaConfig
+
 from safetensors.torch import load_file
-from loaa.model.modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
+
 
 
 def get_accuracies(loaa, logit):
@@ -52,6 +55,8 @@ def main(args):
     )
 
     model = LoaaModel(loaa_config, model)
+
+    print(model.loaa_head)
     state_dict = load_file(args.loaa_path)
     model.loaa_head.load_state_dict(state_dict, strict=True)
     model.loaa_head = model.loaa_head.bfloat16()
@@ -88,7 +93,7 @@ def main(args):
             loaa_logits, outputs, logits = model(
                 input_ids, past_key_values=past_key_values, output_orig=True
             )
-            _, loaa_topk = loaa_logits[...,-1,:].topk(20, dim=-1)
+            _, loaa_topk = loaa_logits[...,-1,:].topk(32, dim=-1)
             input_id = logits[:, -1:].argmax(dim=-1)
             logits_ids.append(input_id.detach().cpu())
             loaa_topk_ids.append(loaa_topk.detach().cpu())
@@ -96,7 +101,7 @@ def main(args):
                 loaa_logits, outputs, logits = model(
                     input_id, past_key_values=past_key_values, output_orig=True
                 )
-                _, loaa_topk = loaa_logits[...,-1,:].topk(20, dim=-1)
+                _, loaa_topk = loaa_logits[...,-1,:].topk(32, dim=-1)
                 input_id = logits[:, -1:].argmax(dim=-1)
                 logits_ids.append(input_id.detach().cpu())
                 loaa_topk_ids.append(loaa_topk.detach().cpu())
@@ -110,7 +115,7 @@ def main(args):
                 for i in range(len(results)):
                     results[i] = torch.cat((results[i], cur_results[i]), dim=0)
 
-    save_path = os.path.join(args.save_dir, f"{args.loaa_path.split("/")[-2]}_heads_accuracy.pt")
+    save_path = os.path.join(args.save_dir, f"{args.loaa_path.split('/')[-2]}_heads_accuracy.pt")
     torch.save(results, save_path)
 
 if __name__ == "__main__":

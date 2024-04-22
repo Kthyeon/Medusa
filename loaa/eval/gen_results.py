@@ -78,7 +78,7 @@ def main():
     parser.add_argument('--accuracy-path', type=str, required=True, help="Path to load accuracy tensor.")
     parser.add_argument('--output-path', type=str, required=True, help="Path to save the generated graph.")
     parser.add_argument('--max-depth', type=int, default=6, help="Maximum depth of the graph.")
-    parser.add_argument('--num-iterations', type=int, default=62, help="Number of exploration iterations.")
+    parser.add_argument('--num-iterations', type=int, default=63, help="Number of exploration iterations.")
     parser.add_argument('--max-child', nargs='+', type=int, default=[10, 10, 10, 10, 10, 10], help="Maximum number of children per depth.")
 
     args = parser.parse_args()
