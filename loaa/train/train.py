@@ -63,28 +63,37 @@ class CustomizedTrainer(Trainer):
         else:
             loaa = model.loaa
 
-        logits = model(
-            input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]
+        logits, grouped_hiddens, orig_hidden = model(
+            input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"],
+            hidden_states = True
         )
         labels = inputs["labels"]
         # Shift so that tokens < n predict n
         loss = 0
         loss_fct = CrossEntropyLoss()
+         # L1 Smooth
+        reg_fct = nn.SmoothL1Loss()
         log = {}
-        coeff = 0.9
-
+        coeff = 1.0
+        co_reg = 0.1
         for i in range(loaa):
+            # logit loss
             loaa_logits = logits[i, :, : -(2 + i)].contiguous()
             loaa_labels = labels[..., 2 + i :].contiguous()
-            # original loss
             loaa_logits = loaa_logits.view(-1, logits.shape[-1])
             loaa_labels = loaa_labels.view(-1)
             loaa_labels = loaa_labels.to(loaa_logits.device)
+            # reg loss
+            loaa_hiddens = grouped_hiddens[i, :, : -(1 + i)].contiguous()
+            loaa_hiddens = loaa_hiddens.view(-1, loaa_hiddens.shape[-1])
+            loaa_hidden_labels = orig_hidden[:, 1 + i:, :].contiguous()
+            loaa_hidden_labels = loaa_hidden_labels.view(-1, loaa_hidden_labels.shape[-1])
+            reg_loss = reg_fct(loaa_hiddens, loaa_hidden_labels)
+
             loss_i = loss_fct(loaa_logits, loaa_labels)
-            loss += coeff ** i * loss_i # (@taehyeonk) changed to exponential decay
+            loss += coeff ** i * (loss_i + co_reg * reg_loss) # (@taehyeonk) changed to exponential decay
             not_ignore = loaa_labels.ne(IGNORE_TOKEN_ID)
             loaa_labels = loaa_labels[not_ignore]
-
             # Add top-k accuracy
             for k in range(1, 5):
                 _, topk = loaa_logits.topk(k, dim=-1)
